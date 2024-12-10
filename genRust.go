@@ -116,8 +116,9 @@ func (gen *CodeGenerator) GenRust() error {
 	}
 	defer f.Close()
 	var imports = `
+#![allow(unused_imports)]
 use regex::Regex;
-use crate::common::*;
+use open_payments_common::{common::*, ValidationError};
 #[cfg(feature = "derive_serde")]
 use serde::{Deserialize, Serialize};`
 	source := []byte(fmt.Sprintf("%s\n\n%s", copyright, imports+gen.Field))
@@ -296,7 +297,7 @@ func genCustomTypeValidation(fieldName string, fieldType string, plural bool, op
 }
 
 // Main function
-func genRustFieldCode(name string, ftype string, plural bool, optional bool, restriction *Restriction, untagged bool) (string, string) {
+func genRustFieldCode(name string, ftype string, plural bool, optional bool, restriction *Restriction, untagged bool, attibute bool) (string, string) {
 	fieldName := genRustFieldName(name)
 	fieldType := genRustFieldType(ftype)
 	validations := ""
@@ -318,6 +319,10 @@ func genRustFieldCode(name string, ftype string, plural bool, optional bool, res
 	rename := genRustFieldRename(name)
 	if untagged {
 		rename = "$value"
+	}
+
+	if attibute {
+		rename = "@" + rename
 	}
 
 	content := fmt.Sprintf("\n#[cfg_attr( feature = \"derive_serde\", serde(rename = \"%s\"", rename)
@@ -361,43 +366,6 @@ func (gen *CodeGenerator) RustSimpleType(v *SimpleType) {
 		gen.Field += genRustEnumCode(enumName, genFieldComment(v.Name, v.Doc, "//"), fieldContent)
 		return
 	}
-
-	return
-
-	if v.List {
-		if _, ok := gen.StructAST[v.Name]; !ok {
-			fieldType := getBasefromSimpleType(trimNSPrefix(v.Base), gen.ProtoTree)
-			content, validation := genRustFieldCode(v.Name, fieldType, true, false, &v.Restriction, false)
-			gen.StructAST[v.Name] = content
-			gen.Field += genRustStructCode(genRustStructName(v.Name, true), v.Doc, gen.StructAST[v.Name], validation, false)
-			return
-		}
-	}
-	if v.Union && len(v.MemberTypes) > 0 {
-		if _, ok := gen.StructAST[v.Name]; !ok {
-			var content, validation string
-			for _, member := range toSortedPairs(v.MemberTypes) {
-				memberName := member.key
-				memberType := member.value
-
-				if memberType == "" { // fix order issue
-					memberType = getBasefromSimpleType(memberName, gen.ProtoTree)
-				}
-				conts, valids := genRustFieldCode(v.Name, memberType, false, false, &v.Restriction, false)
-				content += conts
-				validation += valids
-			}
-			gen.StructAST[v.Name] = content
-			gen.Field += genRustStructCode(genRustStructName(v.Name, true), "", gen.StructAST[v.Name], validation, false)
-		}
-		return
-	}
-	if _, ok := gen.StructAST[v.Name]; !ok {
-		fieldType := getBasefromSimpleType(trimNSPrefix(v.Base), gen.ProtoTree)
-		content, validation := genRustFieldCode(v.Name, fieldType, false, false, &v.Restriction, true)
-		gen.StructAST[v.Name] = content
-		gen.Field += genRustStructCode(genRustStructName(v.Name, true), v.Doc, gen.StructAST[v.Name], validation, true)
-	}
 }
 
 // RustComplexType generates code for complex type XML schema in Rust language
@@ -406,20 +374,20 @@ func (gen *CodeGenerator) RustComplexType(v *ComplexType) {
 	var content, validation string
 	for _, attrGroup := range v.AttributeGroup {
 		fieldType := getBasefromSimpleType(trimNSPrefix(attrGroup.Ref), gen.ProtoTree)
-		conts, valids := genRustFieldCode(attrGroup.Name, fieldType, false, false, nil, false)
+		conts, valids := genRustFieldCode(attrGroup.Name, fieldType, false, false, nil, false, false)
 		content += conts
 		validation += valids
 	}
 	for _, attribute := range v.Attributes {
 		// fieldType := getBasefromSimpleType(trimNSPrefix(attribute.Type), gen.ProtoTree)
 		fieldType := "String"
-		conts, valids := genRustFieldCode(attribute.Name, fieldType, attribute.Plural, attribute.Optional, nil, false)
+		conts, valids := genRustFieldCode(attribute.Name, fieldType, attribute.Plural, attribute.Optional, nil, false, true)
 		content += conts
 		validation += valids
 	}
 	for _, group := range v.Groups {
 		fieldType := getBasefromSimpleType(trimNSPrefix(group.Ref), gen.ProtoTree)
-		conts, valids := genRustFieldCode(group.Name, fieldType, group.Plural, false, nil, false)
+		conts, valids := genRustFieldCode(group.Name, fieldType, group.Plural, false, nil, false, false)
 		content += conts
 		validation += valids
 	}
@@ -434,14 +402,14 @@ func (gen *CodeGenerator) RustComplexType(v *ComplexType) {
 			r = &element.Restriction
 		}
 
-		conts, valids := genRustFieldCode(element.Name, fieldType, element.Plural, element.Optional, r, false)
+		conts, valids := genRustFieldCode(element.Name, fieldType, element.Plural, element.Optional, r, false, false)
 		content += conts
 		validation += valids
 	}
 	if len(v.Base) > 0 {
 		fieldType := getBasefromSimpleType(trimNSPrefix(v.Base), gen.ProtoTree)
 		if isRustBuiltInType(v.Base) {
-			conts, valids := genRustFieldCode("value", fieldType, false, false, nil, false)
+			conts, valids := genRustFieldCode("value", fieldType, false, false, nil, false, false)
 			content += conts
 			validation += valids
 		} else {
@@ -471,13 +439,13 @@ func (gen *CodeGenerator) RustGroup(v *Group) {
 		var content, validation string
 		for _, element := range v.Elements {
 			fieldType := getBasefromSimpleType(trimNSPrefix(element.Type), gen.ProtoTree)
-			conts, valids := genRustFieldCode(element.Name, fieldType, element.Plural, element.Optional, &element.Restriction, false)
+			conts, valids := genRustFieldCode(element.Name, fieldType, element.Plural, element.Optional, &element.Restriction, false, false)
 			content += conts
 			validation += valids
 		}
 		for _, group := range v.Groups {
 			fieldType := getBasefromSimpleType(trimNSPrefix(group.Ref), gen.ProtoTree)
-			conts, valids := genRustFieldCode(group.Name, fieldType, group.Plural, false, nil, false)
+			conts, valids := genRustFieldCode(group.Name, fieldType, group.Plural, false, nil, false, false)
 			content += conts
 			validation += valids
 		}
@@ -493,7 +461,7 @@ func (gen *CodeGenerator) RustAttributeGroup(v *AttributeGroup) {
 		var content, validation string
 		for _, attribute := range v.Attributes {
 			fieldType := getBasefromSimpleType(trimNSPrefix(attribute.Type), gen.ProtoTree)
-			conts, valids := genRustFieldCode(attribute.Name, fieldType, attribute.Plural, attribute.Optional, &attribute.Restriction, false)
+			conts, valids := genRustFieldCode(attribute.Name, fieldType, attribute.Plural, attribute.Optional, &attribute.Restriction, false, false)
 			content += conts
 			validation += valids
 		}
@@ -506,7 +474,7 @@ func (gen *CodeGenerator) RustAttributeGroup(v *AttributeGroup) {
 func (gen *CodeGenerator) RustElement(v *Element) {
 	if _, ok := gen.StructAST[v.Name]; !ok {
 		fieldType := getBasefromSimpleType(trimNSPrefix(v.Type), gen.ProtoTree)
-		content, validation := genRustFieldCode(v.Name, fieldType, v.Plural, v.Optional, &v.Restriction, false)
+		content, validation := genRustFieldCode(v.Name, fieldType, v.Plural, v.Optional, &v.Restriction, false, false)
 		gen.StructAST[v.Name] = content
 		gen.Field += genRustStructCode(genRustFieldName(v.Name), v.Doc, gen.StructAST[v.Name], validation, false)
 	}
@@ -516,7 +484,7 @@ func (gen *CodeGenerator) RustElement(v *Element) {
 func (gen *CodeGenerator) RustAttribute(v *Attribute) {
 	if _, ok := gen.StructAST[v.Name]; !ok {
 		fieldType := getBasefromSimpleType(trimNSPrefix(v.Type), gen.ProtoTree)
-		content, validation := genRustFieldCode(v.Name, fieldType, v.Plural, v.Optional, &v.Restriction, false)
+		content, validation := genRustFieldCode(v.Name, fieldType, v.Plural, v.Optional, &v.Restriction, false, false)
 		gen.StructAST[v.Name] = content
 		gen.Field += genRustStructCode(genRustFieldName(v.Name), v.Doc, gen.StructAST[v.Name], validation, false)
 	}
