@@ -118,7 +118,7 @@ func (gen *CodeGenerator) GenRust() error {
 	var imports = `
 #![allow(unused_imports)]
 use regex::Regex;
-use open_payments_common::{common::*, ValidationError};
+use iso20022_common::{common::*, ValidationError};
 #[cfg(feature = "derive_serde")]
 use serde::{Deserialize, Serialize};`
 	source := []byte(fmt.Sprintf("%s\n\n%s", copyright, imports+gen.Field))
